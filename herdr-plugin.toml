@@ -1,0 +1,18 @@
+id = "mabdullah.stay-awake"
+name = "Stay Awake"
+version = "0.1.0"
+min_herdr_version = "0.7.0"
+description = "Keeps the machine from sleeping while any herdr agent pane is working (Linux, macOS, Windows, and WSL)"
+platforms = ["linux", "macos", "windows"]
+
+# Runs once when the herdr server (re)starts. Seeds our working-set from
+# whatever agents are already mid-turn, in case the server restarted
+# while an agent was running (events alone would miss that).
+[[startup]]
+command = ["node", "index.js"]
+
+# Fires on every agent lifecycle transition. We only care about entering
+# or leaving "working"; everything else is a no-op.
+[[events]]
+on = "pane.agent_status_changed"
+command = ["node", "index.js"]
