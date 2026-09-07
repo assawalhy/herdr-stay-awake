@@ -1,5 +1,22 @@
 # herdr-stay-awake
 
+<p align="center">
+  <a href="README.md"><strong>English</strong></a> ·
+  <a href="README.ar.md">العربية</a>
+</p>
+
+<p align="center">
+  <a href="https://github.com/assawalhy/herdr-stay-awake"><img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="version"></a>
+  <a href="https://herdr.dev/docs/plugins/"><img src="https://img.shields.io/badge/herdr-%3E%3D0.7.0-orange?style=flat-square" alt="herdr"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license"></a>
+  <a href="https://github.com/assawalhy/herdr-stay-awake"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows%20%7C%20wsl-lightgrey?style=flat-square" alt="platform"></a>
+  <a href="https://github.com/assawalhy/herdr-stay-awake"><img src="https://img.shields.io/github/stars/assawalhy/herdr-stay-awake?style=flat-square" alt="stars"></a>
+</p>
+
+<p align="center">
+  <img src="assets/hero.png" alt="Stay Awake — herdr plugin" width="100%">
+</p>
+
 A herdr plugin that holds a sleep inhibitor open for as long as any agent
 pane is `working`, and releases it the moment every agent settles back to
 `idle`, `done`, `blocked`, or `unknown`. Handles macOS, native Linux,
@@ -81,6 +98,7 @@ restores the OS to its preconfigured state.
 herdr plugin action invoke disable --plugin assawalhy.stay-awake
 herdr plugin action invoke enable --plugin assawalhy.stay-awake
 herdr plugin action invoke toggle --plugin assawalhy.stay-awake
+herdr plugin action invoke open-settings --plugin assawalhy.stay-awake
 
 # per-session (keyed by HERDR_SOCKET_PATH hash, visible in status)
 node index.js disable --session   # or --per-session
@@ -99,6 +117,7 @@ A popup TUI with global + per-session toggles and live OS-verified health:
 ```bash
 herdr plugin pane open --plugin assawalhy.stay-awake --entrypoint settings
 # or directly: node index.js settings
+# or via action: herdr plugin action invoke open-settings --plugin assawalhy.stay-awake
 ```
 
 Keys: `g` toggle global, `s` toggle session, `t` toggle grace, `d` doctor,
@@ -146,3 +165,7 @@ node index.js selftest
   plus `doctor`'s `lastPayload` to adjust `extractPaneAndStatus()` if needed.
 - **Non-systemd:** `doctor` shows which fallback is active; if `none`, install
   `xdg-utils` or ensure a D-Bus session bus is running.
+
+## License
+
+MIT — see [LICENSE](LICENSE).
