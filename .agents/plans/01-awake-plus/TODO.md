@@ -16,3 +16,4 @@
 - [x] M5: add selftest (busy/idle logic + OS-verified spawn round-trip) runnable via node index.js selftest in tmp state dir
 - [x] M5: update README: Install/Usage for status/doctor/settings, non-systemd matrix, global vs per-session enable, troubleshooting (stale lock, WSL interop)
 - [x] M5: verify `herdr plugin link` + `herdr plugin action list` + `herdr plugin pane open --plugin assawalhy.stay-awake --entrypoint settings` on Linux + WSL (`powershell.exe` on PATH)
+- [x] fix: the plugin sees 0 working (event payload was nested under data, extract now handles envelope)

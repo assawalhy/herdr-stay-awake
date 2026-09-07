@@ -42,6 +42,12 @@ title = "Stay Awake: toggle"
 contexts = ["global", "workspace", "pane"]
 command = ["node", "index.js"]
 
+[[actions]]
+id = "open-settings"
+title = "Stay Awake: open settings"
+contexts = ["global", "workspace", "pane"]
+command = ["node", "index.js"]
+
 [[panes]]
 id = "settings"
 title = "Stay Awake Settings"

@@ -357,7 +357,10 @@ function reconcile() {
       if (!inhibitor.firstActiveTime) { inhibitor.firstActiveTime = first; inhibitor.lastInactiveTime = null; writeJsonAtomic(INHIBIT_FILE, inhibitor); }
       const elapsed = now - first;
       if (elapsed < cfg.start_grace_seconds * 1000) {
-        log(`grace: waiting start ${elapsed}ms < ${cfg.start_grace_seconds}s`);
+        const remaining = cfg.start_grace_seconds * 1000 - elapsed;
+        log(`grace: waiting start ${elapsed}ms < ${cfg.start_grace_seconds}s, retry in ${remaining}ms`);
+        const secs = Math.ceil(remaining / 1000);
+        try { spawn('sh', ['-c', `sleep ${secs} && "${process.execPath}" "${__filename}" __grace_retry`], { detached: true, stdio: 'ignore', env: process.env }).unref(); } catch {}
         return;
       }
     } else if (!rawShouldBeActive && inhibitor.active) {
@@ -365,7 +368,10 @@ function reconcile() {
       if (!inhibitor.lastInactiveTime) { inhibitor.lastInactiveTime = last; inhibitor.firstActiveTime = null; writeJsonAtomic(INHIBIT_FILE, inhibitor); }
       const elapsed = now - last;
       if (elapsed < cfg.stop_grace_seconds * 1000) {
-        log(`grace: waiting stop ${elapsed}ms < ${cfg.stop_grace_seconds}s`);
+        const remaining = cfg.stop_grace_seconds * 1000 - elapsed;
+        log(`grace: waiting stop ${elapsed}ms < ${cfg.stop_grace_seconds}s, retry in ${remaining}ms`);
+        const secs = Math.ceil(remaining / 1000);
+        try { spawn('sh', ['-c', `sleep ${secs} && "${process.execPath}" "${__filename}" __grace_retry`], { detached: true, stdio: 'ignore', env: process.env }).unref(); } catch {}
         return;
       }
     } else {
@@ -429,8 +435,9 @@ function syncFromAgentList() {
   log(`startup sync: ${working.size} pane(s) working`);
 }
 function extractPaneAndStatus(payload) {
-  const paneId = payload.pane_id || payload.pane || payload.paneId;
-  const status = payload.agent_status || payload.status;
+  const d = payload.data || payload;
+  const paneId = d.pane_id || d.pane || d.paneId || payload.pane_id || payload.pane || payload.paneId;
+  const status = d.agent_status || d.status || payload.agent_status || payload.status;
   return { paneId, status };
 }
 function handleEvent() {
@@ -587,6 +594,17 @@ function actionToggle() {
   const eff = effectiveEnabled();
   if (eff.enabled) { actionDisable(); } else { actionEnable(); }
 }
+function actionOpenSettings() {
+  const bin = process.env.HERDR_BIN_PATH || 'herdr';
+  const r = spawnSync(bin, ['plugin', 'pane', 'open', '--plugin', 'assawalhy.stay-awake', '--entrypoint', 'settings'], { stdio: 'inherit', timeout: 5000 });
+  if (r.error) {
+    log(`open-settings failed: ${r.error.message}`);
+    settingsPane();
+  } else if (r.status !== 0) {
+    log(`open-settings pane open failed ${r.status}`);
+    settingsPane();
+  }
+}
 
 function settingsPane() {
   const readline = require('node:readline');
@@ -662,6 +680,7 @@ function main() {
   const action = process.env.HERDR_PLUGIN_ACTION_ID;
   const argv = process.argv.slice(2);
 
+  if (argv.includes('__grace_retry')) { reconcile(); return; }
   if (argv.includes('selftest')) return selftest();
   if (entry === 'settings' || argv.includes('settings')) return settingsPane();
 
@@ -673,6 +692,7 @@ function main() {
     if (id === 'enable') return actionEnable();
     if (id === 'disable') return actionDisable();
     if (id === 'toggle') return actionToggle();
+    if (id === 'open-settings' || id === 'open_settings' || id === 'settings') return actionOpenSettings();
     // fallback: try argv[0]
     const a = argv[0];
     if (a === 'status') return actionStatus();
@@ -680,17 +700,18 @@ function main() {
     if (a === 'enable') return actionEnable();
     if (a === 'disable') return actionDisable();
     if (a === 'toggle') return actionToggle();
+    if (a === 'open-settings' || a === 'open_settings' || a === 'settings') return actionOpenSettings();
     console.log(`unknown action ${action} argv ${argv}`);
     return;
   }
 
-  if (argv[0] && ['status', 'doctor', 'enable', 'disable', 'toggle', 'settings'].includes(argv[0])) {
+  if (argv[0] && ['status', 'doctor', 'enable', 'disable', 'toggle', 'settings', 'open-settings', 'open_settings'].includes(argv[0])) {
     if (argv[0] === 'status') return actionStatus();
     if (argv[0] === 'doctor') return actionDoctor({ probe: argv.includes('--probe') });
     if (argv[0] === 'enable') return actionEnable();
     if (argv[0] === 'disable') return actionDisable();
     if (argv[0] === 'toggle') return actionToggle();
-    if (argv[0] === 'settings') return settingsPane();
+    if (argv[0] === 'settings' || argv[0] === 'open-settings' || argv[0] === 'open_settings') return actionOpenSettings();
   }
 
   const event = process.env.HERDR_PLUGIN_EVENT;
@@ -698,7 +719,7 @@ function main() {
   else if (event) handleEvent();
   else if (!process.env.HERDR_PLUGIN_STATE_DIR && !process.env.HERDR_PLUGIN_CONFIG_DIR) {
     // no herdr env, show help
-    console.log('Stay Awake — run via herdr plugin actions or events. Commands: status, doctor --probe, enable, disable, toggle, settings, selftest');
+    console.log('Stay Awake — run via herdr plugin actions or events. Commands: status, doctor --probe, enable, disable, toggle, open-settings, settings, selftest');
     return;
   }
   reconcile();

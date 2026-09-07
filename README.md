@@ -102,17 +102,28 @@ herdr plugin pane open --plugin assawalhy.stay-awake --entrypoint settings
 ```
 
 Keys: `g` toggle global, `s` toggle session, `t` toggle grace, `d` doctor,
-`r` refresh, `q` quit. Recommended keybind:
+`r` refresh, `q` quit.
+
+**Keybind to open settings (add to `~/.config/herdr/config.toml`):**
+
+Herdr plugin manifests can't declare default keybinds for panes — add it to your user config. `prefix+a` → open settings (recommended):
 
 ```toml
+# open settings popup
 [[keys.command]]
 key = "prefix+a"
 type = "plugin_action"
-command = "assawalhy.stay-awake.status"
-description = "stay awake status"
-# or pane:
-# type = "plugin_pane" etc. — see herdr docs/plugins#keybindings
+command = "assawalhy.stay-awake.open-settings"
+description = "Stay Awake settings"
+
+# alternative: straight shell binding (no action needed)
+# [[keys.command]]
+# key = "prefix+a"
+# type = "shell"
+# command = "herdr plugin pane open --plugin assawalhy.stay-awake --entrypoint settings"
 ```
+
+Also available: `assawalhy.stay-awake.toggle` for a plain toggle without UI. Press `prefix+?` to verify.
 
 ## Selftest
 
