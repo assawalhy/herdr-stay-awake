@@ -6,7 +6,7 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/assawalhy/herdr-stay-awake"><img src="https://img.shields.io/badge/version-0.1.0-blue?style=flat-square" alt="version"></a>
+  <a href="https://github.com/assawalhy/herdr-stay-awake"><img src="https://img.shields.io/badge/version-0.2.0-blue?style=flat-square" alt="version"></a>
   <a href="https://herdr.dev/docs/plugins/"><img src="https://img.shields.io/badge/herdr-%3E%3D0.7.0-orange?style=flat-square" alt="herdr"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green?style=flat-square" alt="license"></a>
   <a href="https://github.com/assawalhy/herdr-stay-awake"><img src="https://img.shields.io/badge/platform-linux%20%7C%20macos%20%7C%20windows%20%7C%20wsl-lightgrey?style=flat-square" alt="platform"></a>
@@ -49,9 +49,13 @@ herdr plugin action list --plugin assawalhy.stay-awake
 - After that, it reacts to `pane.agent_status_changed` events: add on `working`,
   remove on anything else.
 - The inhibitor turns on when the working-set goes from empty to non-empty,
-  and off when it goes back to empty. All inhibitors are **process-bound**
-  (`caffeinate -w <pid>`, `systemd-inhibit` watchdog, D-Bus cookie, PowerShell
-  marker) so a crash auto-releases — no stale locks.
+  and off when it goes back to empty. Inhibitors are long-lived detached
+  processes (`caffeinate -dis`, `systemd-inhibit … sleep N`, Windows PowerShell
+  **keeper**) — they do **not** auto-release if the plugin crashes. The safety
+  net is `max_hold_seconds` (default 12h): every platform's inhibitor self-exits
+  after that, so a stale working-set can't hold the machine awake forever. The
+  Windows/WSL keeper re-asserts `SetThreadExecutionState` every 30s and writes a
+  heartbeat file so `status` can prove the OS request exists.
 
 Grace periods (`grace_enabled` in config, 5s acquire / 30s release)
 debounce flaps and cover crash gaps; **on by default** (toggle with `t` in settings pane or `config.json`).
@@ -60,10 +64,10 @@ debounce flaps and cover crash gaps; **on by default** (toggle with `t` in setti
 
 | Platform | Mechanism | Fallback chain |
 | --- | --- | --- |
-| macOS | `caffeinate -d -i -s -w <pid>`, killed to release | — |
-| Linux (native) | `systemd-inhibit --what=sleep:idle … sleep infinity` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → degraded warning |
-| Windows (native) | hidden PowerShell `SetThreadExecutionState` | marker `herdr-stay-awake-inhibitor-marker` in `-File` path |
-| WSL | same PowerShell via interop (`powershell.exe` on `$PATH`, file written to Windows `%TEMP%` for visibility) | — |
+| macOS | detached `caffeinate -d -i -s -t <max_hold>`, killed to release | — |
+| Linux (native) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → degraded warning |
+| Windows (native) | hidden PowerShell keeper re-asserting `SetThreadExecutionState` every 30s + heartbeat file in state dir | marker `herdr-stay-awake-inhibitor-marker` in `-File` path |
+| WSL | same PowerShell keeper via interop (`powershell.exe` on `$PATH`), script + heartbeat in Windows `%TEMP%` for visibility | — |
 
 Non-systemd Linux is auto-detected at runtime via `hasCommand` probing
 (`gdbus`/`dbus-send`/`qdbus` → GNOME/Freedesktop, else `xdg-screensaver`/`xset`).
@@ -83,9 +87,18 @@ node index.js doctor --probe
 
 `status` shows (human + JSON): platform, backend, enabled (global + per-session),
 working **count** (not per-pane IDs), inhibitor active, OS-verified `awake` detail
-(`systemd-inhibit --list`, `pmset -g assertions`, `Get-CimInstance` marker, D-Bus),
-grace config, and issues. `doctor` adds binary presence, config/state paths,
-socket reachable, stale pid check, last payload, and healthy flag.
+(`systemd-inhibit --list`, `pmset -g assertions`, Windows/WSL heartbeat file
+freshness + last `SetThreadExecutionState` return value, D-Bus), grace config,
+max hold, and issues. `doctor` adds binary presence, config/state paths, keeper
+script + heartbeat paths, battery state (Windows/WSL), socket reachable, stale
+pid check, last payload, and healthy flag.
+
+> **Windows/WSL verification is heartbeat-based, not process-count based.** A
+> PowerShell process sitting in `Start-Sleep` proves nothing (v0.1.0's bug: the
+> API call never happened because PowerShell parsed `0x80000001` as a negative
+> `Int32` and could not convert it to `UInt32`). `doctor --probe` therefore runs
+> an isolated keeper and a previous-flags probe that proves `ES_SYSTEM_REQUIRED`
+> is actually registered — no admin needed.
 
 ## Enable / disable (global + per-session)
 
@@ -144,9 +157,26 @@ description = "Stay Awake settings"
 
 Also available: `assawalhy.stay-awake.toggle` for a plain toggle without UI. Press `prefix+?` to verify.
 
+## What this cannot do (Windows/WSL)
+
+`SetThreadExecutionState` (ES_SYSTEM_REQUIRED) prevents **idle** sleep and display
+timeout while an agent is working. It cannot prevent:
+
+- **Lid close** and **power/sleep button** (documented by Microsoft: "cannot be
+  used to prevent the user from putting the computer to sleep").
+- **Battery-critical** forced sleep/hibernate (this plugin cannot stop physics;
+  `doctor` reports battery state so you can see it coming).
+- **`Hibernate after`** timeouts and screen lock/screensaver.
+- Sleep while the WSL VM itself is frozen: during S3 sleep the whole WSL VM is
+  suspended — only the Windows-side keeper survives, and its 30s re-assert loop
+  re-arms the request after every resume (self-healing).
+
+Manual cross-check (needs admin): `powercfg /requests` should show
+`[PROCESS] \Device\HarddiskVolume*\Windows\System32\WindowsPowerShell\v1.0\powershell.exe` with a `System` execution reason while an agent is working.
+
 ## Selftest
 
-Validates busy/idle logic and does an OS-verified spawn round-trip in a temp state dir (never touches live pid files):
+Validates busy/idle logic and does an OS-verified spawn round-trip in a temp state dir (never touches live pid files). On Windows/WSL it runs isolated keeper + API probes instead of the live round-trip, so a running inhibitor is never disturbed:
 
 ```bash
 node index.js selftest
@@ -156,8 +186,19 @@ node index.js selftest
 
 - **WSL interop:** `powershell.exe` must work from WSL (`powershell.exe -c "echo hi"`).
   If blocked, Windows branch is degraded — `doctor` reports it.
-- **Stale lock after kill:** inhibitors are process-bound; `status` OS-verifies and
-  `reconcile` auto-restarts a dead handle. `disable` always restores OS.
+- **Windows/WSL "awake" lie (v0.1.0 bug):** `status` said HEALTHY while the machine
+  slept because it counted marker processes, not OS requests. v0.2.0 verifies the
+  keeper heartbeat (freshness + `lastRetval`) instead; a machine that already
+  slept shows `heartbeat stale` and the next event auto-restarts the keeper.
+  `doctor --probe` proves the ES request end-to-end without admin.
+- **Machine stays awake after agents finished:** the keeper self-exits after
+  `max_hold_seconds` (default 12h). Lower it in
+  `$(herdr plugin config-dir assawalhy.stay-awake)/config.json`
+  (`"max_hold_seconds": 3600`) or run `disable`/`status` to release early.
+- **Orphan inhibitor after plugin crash:** inhibitors are long-lived detached
+  processes; if the plugin dies, each one still self-exits at `max_hold_seconds`
+  (default 12h). `status` OS-verifies and `reconcile` auto-restarts a dead
+  handle; `disable` always restores OS immediately.
 - **Event payload shape:** herdr docs don't publish `pane.agent_status_changed` JSON.
   `index.js` tries `pane_id`/`agent_status` with fallbacks; check
   `herdr plugin log list --plugin assawalhy.stay-awake` and

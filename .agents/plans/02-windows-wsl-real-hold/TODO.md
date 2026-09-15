@@ -1,0 +1,24 @@
+# TODO — 02 Windows/WSL Real Hold (v0.2.0)
+
+- [x] M1: fix `powershellScript()` flags — `[uint32]"0x80000000" -bor [uint32]"0x00000001"`, `SetLastError=true`, capture retval
+- [x] M1: convert marker script to keeper: re-assert ES every 30s, write heartbeat (`assertedAt`/`firstAt`/`lastRetval`) to state dir (native-Windows) or Windows TEMP (WSL, read via /mnt/c)
+- [x] M1: launch keeper with `-ExecutionPolicy Bypass`, capture stderr into stay-awake.log, verify started via heartbeat file (not process count)
+- [x] M1: dedupe before start — best-effort state lock + `windowsLikeStop()`-then-start to kill double-start races (log shows 2 live markers)
+- [x] M1: release path = kill keeper by marker match; keeper self-exits after `max_hold_seconds` (default 12h, configurable via config.json)
+- [x] M2: `osVerifyInhibitor` for windows/wsl reads heartbeat freshness (< 3× interval) + lastRetval, falls back to marker count as secondary
+- [x] M2: `status`/`doctor` show heartbeat path/age, max_hold, keeper count, last error; `--probe` runs an isolated keeper + previous-flags API probe (admin-free OS proof)
+- [x] M2: doctor reports battery/DC + OS limits it cannot override (lid close, power button, battery critical, hibernate-after) instead of claiming full coverage
+- [x] M3: macOS — drop `caffeinate -w <transient pid>`, spawn detached long-lived `caffeinate -dis`, verify via `pmset -g assertions` in status/doctor (unverifiable locally, flagged in release notes)
+- [x] M4: fix grace-timer reset branch (line ~377-380) — mutated object never written back, `lastInactiveTime` stays stale forever
+- [x] M5: selftest gains windows/wsl keeper round-trip (isolated probe keeper heartbeat + API probe returns 0x80000001, without disturbing a live keeper)
+- [x] M5: README — what ES can/cannot do (lid close, power button, battery critical, hibernate, WSL frozen during sleep), manual `powercfg /requests` elevated cross-check, max_hold config, heartbeat-based verification note, macOS notes
+- [x] M5: bump manifest version to 0.2.0
+- [x] M5: verify on-device — live keeper deployed by reconcile (old broken keeper auto-killed), heartbeat fresh retval=2147483649, `status` HEALTHY, `doctor --probe` PASS, `selftest` PASS, exactly 1 keeper process
+- [x] review fix: selftest now runs in a subprocess with the tmp state dir set before require — real isolation, no phantom panes, no clobbering concurrent herdr events (the old env-override + backup/restore is gone)
+- [x] review fix: `max_hold_seconds` bounds all platforms — macOS `caffeinate -t`, Linux `systemd-inhibit … sleep <N>`, Windows keeper; README corrected (long-lived inhibitors do NOT auto-release on crash)
+- [x] review fix: apostrophe-safe heartbeat path (`''` escaping) in generated PowerShell script
+- [x] review fix: probe keeper removes stale heartbeat before spawn (no false PASS from an interrupted prior probe)
+- [x] review fix: `SetThreadExecutionState` retval 0 = success when Win32 error is 0 (it returns the *previous* state); API probe now asserts prev==0x80000001 only; keeper reports Win32 error, not raw retval
+- [x] review fix: single-flight start lock (`wx` + 60s stale steal) closes the double-start race
+- [x] review fix: marker process count only queried on unhealthy heartbeat (status stays fast); guarded keeper-log open; `max_hold_seconds` validated >= 60
+- [ ] M5: overnight proof — machine must NOT idle-sleep during a long unplugged agent run (battery currently 8%, discharging: battery-critical shutdown is a documented non-goal)
