@@ -26,7 +26,7 @@ herdr plugin install assawalhy/herdr-stay-awake
 herdr plugin list
 ```
 
-لا توجد خطوة بناء — ملف تعريف (manifest) وسكربت Node واحد. يستخدم فقط الأدوات المتوفرة في النظام
+لا توجد خطوة بناء — ملف تعريف (manifest) مع ملف `index.js` خفيف كنقطة دخول فوق وحدات `src/`. يستخدم فقط الأدوات المتوفرة في النظام
 (`systemd-inhibit`، `caffeinate`، `gdbus`/`dbus-send`، `xdg-screensaver`، `powershell.exe` في WSL/Windows).
 
 ### التطوير المحلي

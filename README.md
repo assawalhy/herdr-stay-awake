@@ -30,7 +30,7 @@ herdr plugin install assawalhy/herdr-stay-awake
 herdr plugin list
 ```
 
-No build step — manifest plus one Node script. Uses only system binaries
+No build step — manifest plus a thin `index.js` entry over `src/` modules. Uses only system binaries
 (`systemd-inhibit`, `caffeinate`, `gdbus`/`dbus-send`, `xdg-screensaver`,
 `powershell.exe` on WSL/Windows).
 
