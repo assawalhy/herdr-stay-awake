@@ -5,6 +5,7 @@ const { log, detectPlatform, writeJsonAtomic } = require('./util');
 const { setGlobalEnabled, setSessionEnabled, effectiveEnabled } = require('./config');
 const { reconcile, loadInhibitor } = require('./state');
 const { stopInhibitor } = require('./inhibitor');
+const { stopWatchdog } = require('./watchdog');
 const { actionStatus } = require('./status');
 const { settingsPane } = require('./settings');
 
@@ -32,6 +33,7 @@ function actionDisable() {
     stopInhibitor(inhibitor.platform || detectPlatform(), inhibitor.handle);
     writeJsonAtomic(INHIBIT_FILE, { active: false, handle: null, platform: detectPlatform(), backend: null, firstActiveTime: null, lastInactiveTime: null });
   }
+  stopWatchdog();
   actionStatus();
 }
 function actionToggle() {

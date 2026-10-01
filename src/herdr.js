@@ -21,6 +21,10 @@ function extractAgents(data) {
 }
 function syncFromAgentList() {
   const data = runHerdr(['agent', 'list']);
+  // On failure keep the previous set instead of clobbering it to empty: a
+  // transient `herdr agent list` error must not flap the inhibitor. The
+  // watchdog treats repeated failures as "herdr is gone" and releases.
+  if (data == null) { log('agent-list sync skipped: herdr agent list unavailable'); return false; }
   const working = new Set();
   for (const a of extractAgents(data)) {
     const status = a.status || a.agent_status;
@@ -28,7 +32,8 @@ function syncFromAgentList() {
     if (status === 'working' && paneId) working.add(paneId);
   }
   saveWorking(working);
-  log(`startup sync: ${working.size} pane(s) working`);
+  log(`agent-list sync: ${working.size} pane(s) working`);
+  return true;
 }
 function extractPaneAndStatus(payload) {
   const d = payload.data || payload;

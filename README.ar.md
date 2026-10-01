@@ -43,6 +43,9 @@ herdr plugin action list --plugin assawalhy.stay-awake
 - بعد ذلك، يتفاعل مع أحداث `pane.agent_status_changed`: يضيف اللوحة عند `working` ويزيلها عند أي حالة أخرى.
 - يُفعّل مانع السكون عندما تنتقل المجموعة من فارغة إلى غير فارغة، ويُعطّله عندما تعود إلى فارغة. جميع الموانع **مرتبطة بالعملية**
   (`caffeinate -w <pid>`، مراقب `systemd-inhibit`، كوكي D-Bus، علامة PowerShell) لذا فإن الانهيار يُحرّر تلقائياً — لا أقفال عالقة.
+- على **Linux الأصلي**، يرافق المانع النشط **مراقب حيوية** منفصل: كل 30 ثانية يعيد قراءة `herdr agent list` ويُوفّق الحالة،
+  ويحرّر مانع `sleep:idle` فور توقف كل اللوحات. لا يُرسل herdr أحداثاً أثناء المهام الطويلة، لذا لا يجوز أن يعتمد التحرير على
+  الأحداث وحدها؛ يخرج المراقب مع المانع ويحدّه `max_hold_seconds`.
 
 فترات السماح (`grace_enabled` في الإعدادات، 5 ثوانٍ للتفعيل / 30 ثانية للإيقاف)
 تُقلّل من التذبذب وتغطي فجوات الانهيار؛ **مفعّلة افتراضياً** (بدّلها بـ `t` في لوحة الإعدادات أو عبر `config.json`).
@@ -52,7 +55,7 @@ herdr plugin action list --plugin assawalhy.stay-awake
 | المنصة | الآلية | سلسلة البدائل |
 | --- | --- | --- |
 | macOS | `caffeinate -d -i -s -w <pid>`، يُقتل للتحرير | — |
-| Linux (أصلي) | `systemd-inhibit --what=sleep:idle … sleep infinity` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → تحذير تدهور |
+| Linux (أصلي) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` + مراقب حيوية كل 30 ثانية يقرأ `herdr agent list` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → تحذير تدهور |
 | Windows (أصلي) | PowerShell مخفي `SetThreadExecutionState` | علامة `herdr-stay-awake-inhibitor-marker` في مسار `-File` |
 | WSL | نفس PowerShell عبر التشغيل البيني (`powershell.exe` في `$PATH`، الملف يُكتب في `%TEMP%` الخاص بـ Windows) | — |
 
