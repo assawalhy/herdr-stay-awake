@@ -8,6 +8,7 @@ const LOG_FILE = path.join(STATE_DIR, 'stay-awake.log');
 const CONFIG_FILE = path.join(CONFIG_DIR, 'config.json');
 const SESSION_FILE = path.join(STATE_DIR, 'session.json');
 const LAST_PAYLOAD_FILE = path.join(STATE_DIR, 'last-payload.json');
+const WATCHDOG_PID_FILE = path.join(STATE_DIR, 'watchdog.pid');
 const MARKER = 'herdr-stay-awake-inhibitor-marker';
 
-module.exports = { STATE_DIR, CONFIG_DIR, WORKING_FILE, INHIBIT_FILE, LOG_FILE, CONFIG_FILE, SESSION_FILE, LAST_PAYLOAD_FILE, MARKER };
+module.exports = { STATE_DIR, CONFIG_DIR, WORKING_FILE, INHIBIT_FILE, LOG_FILE, CONFIG_FILE, SESSION_FILE, LAST_PAYLOAD_FILE, WATCHDOG_PID_FILE, MARKER };

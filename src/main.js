@@ -1,5 +1,5 @@
 const { syncFromAgentList, handleEvent } = require('./herdr');
-const { reconcile } = require('./state');
+const { reconcile, watchdogLoop } = require('./state');
 const { actionStatus, actionDoctor } = require('./status');
 const { actionEnable, actionDisable, actionToggle, actionOpenSettings } = require('./actions');
 const { settingsPane } = require('./settings');
@@ -11,6 +11,7 @@ function main() {
   const argv = process.argv.slice(2);
 
   if (argv.includes('__grace_retry')) { reconcile(); return; }
+  if (argv.includes('__watchdog')) { watchdogLoop(); return; }
   if (argv.includes('selftest')) return selftest();
   if (argv.includes('__selftest')) return selftestInner();
   if (entry === 'settings' || argv.includes('settings')) return settingsPane();

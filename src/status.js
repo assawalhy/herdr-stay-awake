@@ -6,6 +6,7 @@ const { STATE_DIR, CONFIG_FILE, SESSION_FILE, INHIBIT_FILE, WORKING_FILE, LAST_P
 const { readJson, hasCommand, detectPlatform } = require('./util');
 const { effectiveEnabled } = require('./config');
 const { loadWorking, loadInhibitor } = require('./state');
+const { readWatchdogPid } = require('./watchdog');
 const { osVerifyInhibitor } = require('./verify');
 const { startInhibitor, stopInhibitor } = require('./inhibitor');
 const { detectLinuxBackend } = require('./backends/linux');
@@ -40,6 +41,7 @@ function collectStatus() {
     configPath: CONFIG_FILE,
     stateDir: STATE_DIR,
     lastPayload: readJson(LAST_PAYLOAD_FILE, null),
+    watchdogPid: readWatchdogPid(),
   };
 }
 function healthCheck() {
@@ -66,6 +68,7 @@ function actionStatus() {
   lines.push(`  OS verified: ${s.osVerified.osActive ? 'awake' : 'not awake'} — ${s.osVerified.detail}`);
   lines.push(`  grace: ${s.grace.enabled ? `on (${s.grace.startGrace}s/${s.grace.stopGrace}s)` : 'off'}`);
   lines.push(`  max hold: ${s.maxHoldSeconds}s`);
+  lines.push(`  watchdog: ${s.watchdogPid ? `pid ${s.watchdogPid}` : 'inactive'}`);
   if (h.issues.length) { lines.push(`  issues:`); h.issues.forEach(i => lines.push(`    - ${i}`)); }
   lines.push(`  config: ${s.configPath}`);
   lines.push(`  state: ${s.stateDir}`);
@@ -96,6 +99,7 @@ function actionDoctor(opts) {
     console.log(`battery: ${JSON.stringify(windowsBatteryInfo())}`);
     console.log(`limits: ES cannot prevent lid-close, power-button, or battery-critical sleep; hibernate-after and WSL-freeze are outside control`);
   }
+  console.log(`watchdog pid: ${s.watchdogPid || '(none)'}`);
   console.log(`herdr socket: ${s.socketPath || '(none)'} exists=${s.socketPath ? fs.existsSync(s.socketPath) : 'n/a'}`);
   console.log(`herdr bin: ${process.env.HERDR_BIN_PATH || 'herdr (PATH)'}`);
   console.log(`config: ${s.configPath} exists=${fs.existsSync(s.configPath)}`);

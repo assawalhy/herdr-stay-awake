@@ -1,10 +1,13 @@
 const { spawn } = require('node:child_process');
 
-const { WORKING_FILE, INHIBIT_FILE } = require('./constants');
+const fs = require('node:fs');
+
+const { WORKING_FILE, INHIBIT_FILE, WATCHDOG_PID_FILE } = require('./constants');
 const { log, readJson, writeJsonAtomic, detectPlatform } = require('./util');
-const { effectiveEnabled } = require('./config');
+const { effectiveEnabled, maxHoldSeconds } = require('./config');
 const { osVerifyInhibitor } = require('./verify');
 const { startInhibitor, stopInhibitor } = require('./inhibitor');
+const { ensureWatchdog, stopWatchdog, readWatchdogPid, writeWatchdogPid, WATCHDOG_INTERVAL_MS } = require('./watchdog');
 
 function loadWorking() { return new Set(readJson(WORKING_FILE, [])); }
 function saveWorking(set) { writeJsonAtomic(WORKING_FILE, [...set]); }
@@ -76,6 +79,53 @@ function reconcile() {
       writeJsonAtomic(INHIBIT_FILE, { active: !!handle, handle, platform, backend, firstActiveTime: null, lastInactiveTime: null });
     }
   }
+
+  // The Linux block must not outlive the work it was taken for: keep a
+  // liveness watchdog tied to the inhibitor's lifetime. Linux-only — the
+  // Windows/WSL keeper and macOS caffeinate have their own liveness handling.
+  if (platform === 'linux') { if (loadInhibitor().active) ensureWatchdog(); else stopWatchdog(); }
 }
 
-module.exports = { loadWorking, saveWorking, loadInhibitor, reconcile };
+function releaseInhibitor() {
+  const platform = detectPlatform();
+  const inhibitor = loadInhibitor();
+  if (!inhibitor.active) { stopWatchdog(); return false; }
+  log(`releasing inhibitor (platform=${inhibitor.platform || platform})`);
+  stopInhibitor(inhibitor.platform || platform, inhibitor.handle);
+  writeJsonAtomic(INHIBIT_FILE, { active: false, handle: null, platform, backend: null, firstActiveTime: null, lastInactiveTime: null });
+  return true;
+}
+
+function herdrSocketGone() {
+  const sock = process.env.HERDR_SOCKET_PATH;
+  if (!sock) return false;
+  try { return !fs.existsSync(sock); } catch { return false; }
+}
+
+// Detached, single-instance watchdog entrypoint (`node index.js __watchdog`).
+// Re-syncs from `herdr agent list` so a missed event cannot pin the block until
+// the 12h hold cap. Exits as soon as the inhibitor is no longer active.
+async function watchdogLoop() {
+  const me = process.pid;
+  writeWatchdogPid(me);
+  const deadline = Date.now() + maxHoldSeconds() * 1000;
+  const maxFailures = 5;
+  let failures = 0;
+  log(`watchdog: loop start pid ${me} interval ${WATCHDOG_INTERVAL_MS}ms maxHold ${maxHoldSeconds()}s`);
+  for (;;) {
+    if (!loadInhibitor().active) { log('watchdog: inhibitor not active, exiting'); break; }
+    if (Date.now() >= deadline) { log('watchdog: max hold reached, releasing'); releaseInhibitor(); break; }
+    if (herdrSocketGone()) { log('watchdog: herdr socket gone, releasing'); releaseInhibitor(); break; }
+    const { syncFromAgentList } = require('./herdr'); // lazy: avoids a require cycle
+    const ok = syncFromAgentList();
+    failures = ok ? 0 : failures + 1;
+    if (failures >= maxFailures) { log(`watchdog: herdr agent list failed ${failures}x, releasing`); releaseInhibitor(); break; }
+    reconcile();
+    if (!loadInhibitor().active) { log('watchdog: released by reconcile, exiting'); break; }
+    await new Promise((r) => setTimeout(r, WATCHDOG_INTERVAL_MS));
+  }
+  try { const cur = readWatchdogPid(); if (cur === me || cur == null) fs.unlinkSync(WATCHDOG_PID_FILE); } catch {}
+  log('watchdog: loop end');
+}
+
+module.exports = { loadWorking, saveWorking, loadInhibitor, reconcile, releaseInhibitor, watchdogLoop };

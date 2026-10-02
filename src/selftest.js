@@ -2,7 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
-const { detectPlatform } = require('./util');
+const { detectPlatform, isAlive } = require('./util');
 const { saveWorking, loadWorking } = require('./state');
 const { extractPaneAndStatus } = require('./herdr');
 const { startInhibitor, stopInhibitor } = require('./inhibitor');
@@ -46,6 +46,8 @@ function selftestInner() {
         console.log(`verify ${JSON.stringify(v)}`);
         if (!v.osActive) { console.log('FAIL inhibitor not OS-verified'); ok = false; }
         stopInhibitor(plat, h);
+        // Stop is async (SIGTERM): give the OS a moment to reflect it before asserting.
+        for (let i = 0; i < 25 && h.pid != null && isAlive(h.pid); i++) spawnSync('sleep', ['0.2']);
         const v2 = osVerifyInhibitor(plat, h.backend || h.kind, h);
         console.log(`after stop verify ${JSON.stringify(v2)}`);
         if (v2.osActive) { console.log('FAIL inhibitor survived stop'); ok = false; }

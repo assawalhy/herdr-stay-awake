@@ -56,6 +56,11 @@ herdr plugin action list --plugin assawalhy.stay-awake
   after that, so a stale working-set can't hold the machine awake forever. The
   Windows/WSL keeper re-asserts `SetThreadExecutionState` every 30s and writes a
   heartbeat file so `status` can prove the OS request exists.
+- On **native Linux**, an active inhibitor is accompanied by a detached
+  **liveness watchdog**: every 30s it re-reads `herdr agent list` and reconciles,
+  releasing the `sleep:idle` block as soon as no pane is working. Herdr emits no
+  events during long turns, so release must not depend on events alone; the
+  watchdog exits with the inhibitor and is bounded by `max_hold_seconds`.
 
 Grace periods (`grace_enabled` in config, 5s acquire / 30s release)
 debounce flaps and cover crash gaps; **on by default** (toggle with `t` in settings pane or `config.json`).
@@ -65,7 +70,7 @@ debounce flaps and cover crash gaps; **on by default** (toggle with `t` in setti
 | Platform | Mechanism | Fallback chain |
 | --- | --- | --- |
 | macOS | detached `caffeinate -d -i -s -t <max_hold>`, killed to release | — |
-| Linux (native) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → degraded warning |
+| Linux (native) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` + 30s liveness watchdog re-reading `herdr agent list` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → degraded warning |
 | Windows (native) | hidden PowerShell keeper re-asserting `SetThreadExecutionState` every 30s + heartbeat file in state dir | marker `herdr-stay-awake-inhibitor-marker` in `-File` path |
 | WSL | same PowerShell keeper via interop (`powershell.exe` on `$PATH`), script + heartbeat in Windows `%TEMP%` for visibility | — |
 
