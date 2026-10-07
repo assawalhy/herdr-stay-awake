@@ -65,12 +65,46 @@ herdr plugin action list --plugin assawalhy.stay-awake
 Grace periods (`grace_enabled` in config, 5s acquire / 30s release)
 debounce flaps and cover crash gaps; **on by default** (toggle with `t` in settings pane or `config.json`).
 
+## Sleep after release (Linux) — `sleep_after_idle_minutes`
+
+The desktop takes **one** sleep shot per idle period. If a block inhibitor is
+standing when that timer expires, GNOME logs `BlockedByInhibitorLock` and never
+asks again — the machine then stays awake until you touch it, even though the
+block is long gone. Verified on this machine: refused at 09:10, block released at
+12:09, still awake at 13:06 with nothing holding it.
+
+So after the block is released the watchdog does not exit immediately. It lingers
+(`nudge_linger_minutes`, default 90) and, once the session has been idle
+`sleep_after_idle_minutes` (default 30) with no working pane for 2 continuous
+minutes, re-issues the request itself via `loginctl suspend`. That goes through
+logind, so it is still refused while any inhibitor stands — it re-arms the
+desktop's attempt, it does not bypass your own hold.
+
+```jsonc
+{
+  "sleep_after_idle_minutes": 30,      // 0 = never nudge
+  "nudge_linger_minutes": 90,          // how long the watchdog waits after release
+  "sleep_while_working_minutes": 0     // opt-in, see below
+}
+```
+
+Set `sleep_after_idle_minutes` above your desktop's own idle timeout (20 min AC /
+15 min battery with GNOME defaults) so the nudge never races the desktop's timer.
+`status` shows the current idle time and whether a nudge is armed.
+
+**`sleep_while_working_minutes`** is the opt-in you may not want: `0` (default)
+keeps today's behaviour, a non-zero value releases the block *even though panes
+are working* once you have been idle that long — sleep wins over agent progress.
+S3 freezes the agents rather than killing them, so they resume on wake. Set it
+only if you would rather the laptop sleep than keep a fleet running while you are
+out; `w` in the settings pane cycles it.
+
 ## Platform behavior
 
 | Platform | Mechanism | Fallback chain |
 | --- | --- | --- |
 | macOS | detached `caffeinate -d -i -s -t <max_hold>`, killed to release | — |
-| Linux (native) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` + 30s liveness watchdog re-reading `herdr agent list` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → degraded warning |
+| Linux (native) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` + 30s liveness watchdog re-reading `herdr agent list` + post-release linger that re-arms a refused desktop sleep | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → degraded warning |
 | Windows (native) | hidden PowerShell keeper re-asserting `SetThreadExecutionState` every 30s + heartbeat file in state dir | marker `herdr-stay-awake-inhibitor-marker` in `-File` path |
 | WSL | same PowerShell keeper via interop (`powershell.exe` on `$PATH`), script + heartbeat in Windows `%TEMP%` for visibility | — |
 

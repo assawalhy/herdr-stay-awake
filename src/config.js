@@ -2,7 +2,27 @@ const { CONFIG_FILE, SESSION_FILE } = require('./constants');
 const { readJson, writeJsonAtomic, socketHash } = require('./util');
 
 function defaultConfig() {
-  return { enabled: true, grace_enabled: true, start_grace_seconds: 5, stop_grace_seconds: 30, max_hold_seconds: 43200 };
+  // sleep_after_idle_minutes: after the block is released, re-issue the OS sleep
+  // request once the session has been idle this long (0 = never). Keep it above
+  // GNOME's own sleep-inactive-*-timeout (20 min AC / 15 min battery here) so we
+  // never race the desktop's own timer.
+  // nudge_linger_minutes: how long the watchdog stays alive after release to do it.
+  // sleep_while_working_minutes: opt-in — release the block even though panes are
+  // working once the session has been idle this long (0 = off, current behaviour).
+  return {
+    enabled: true,
+    grace_enabled: true,
+    start_grace_seconds: 5,
+    stop_grace_seconds: 30,
+    max_hold_seconds: 43200,
+    sleep_after_idle_minutes: 30,
+    nudge_linger_minutes: 90,
+    sleep_while_working_minutes: 0,
+  };
+}
+function minutes(v, dflt, min) {
+  const n = Number(v);
+  return Number.isFinite(n) && n >= min ? n : dflt;
 }
 function loadGlobalConfig() {
   const c = readJson(CONFIG_FILE, null);
@@ -13,6 +33,9 @@ function loadGlobalConfig() {
     start_grace_seconds: Number(c.start_grace_seconds) || 5,
     stop_grace_seconds: Number(c.stop_grace_seconds) || 30,
     max_hold_seconds: Number(c.max_hold_seconds) || 43200,
+    sleep_after_idle_minutes: minutes(c.sleep_after_idle_minutes, 30, 0),
+    nudge_linger_minutes: minutes(c.nudge_linger_minutes, 90, 1),
+    sleep_while_working_minutes: minutes(c.sleep_while_working_minutes, 0, 0),
   };
 }
 function saveGlobalConfig(c) { writeJsonAtomic(CONFIG_FILE, c); }

@@ -3,13 +3,13 @@ const path = require('node:path');
 const { spawnSync } = require('node:child_process');
 
 const { STATE_DIR, CONFIG_FILE, SESSION_FILE, INHIBIT_FILE, WORKING_FILE, LAST_PAYLOAD_FILE } = require('./constants');
-const { readJson, hasCommand, detectPlatform } = require('./util');
+const { readJson, hasCommand, detectPlatform, isAlive } = require('./util');
 const { effectiveEnabled } = require('./config');
 const { loadWorking, loadInhibitor } = require('./state');
 const { readWatchdogPid } = require('./watchdog');
 const { osVerifyInhibitor } = require('./verify');
 const { startInhibitor, stopInhibitor } = require('./inhibitor');
-const { detectLinuxBackend } = require('./backends/linux');
+const { detectLinuxBackend, logindIdleState } = require('./backends/linux');
 const { probeWindowsKeeper, windowsApiProbe, windowsBatteryInfo } = require('./backends/windows');
 
 function collectStatus() {
@@ -25,6 +25,9 @@ function collectStatus() {
   }
   const os = inhibitor.active ? osVerifyInhibitor(inhibitor.platform || platform, inhibitor.backend, inhibitor.handle) : { osActive: false, detail: 'inhibitor not active' };
   const cfg = eff.global;
+  // Probed only while a block is held — that is the only state where the answer
+  // changes what the user should do, and status must stay fast (see 02/M5).
+  const idle = platform === 'linux' && inhibitor.active ? logindIdleState() : null;
   return {
     platform,
     backend,
@@ -35,6 +38,12 @@ function collectStatus() {
     workingCount: working.size,
     inhibitor: { active: !!inhibitor.active, handle: inhibitor.handle, platform: inhibitor.platform, backend: inhibitor.backend },
     osVerified: os,
+    idle,
+    sleep: {
+      afterIdleMinutes: cfg.sleep_after_idle_minutes,
+      lingerMinutes: cfg.nudge_linger_minutes,
+      whileWorkingMinutes: cfg.sleep_while_working_minutes,
+    },
     grace: { enabled: !!cfg.grace_enabled, startGrace: cfg.start_grace_seconds, stopGrace: cfg.stop_grace_seconds },
     maxHoldSeconds: cfg.max_hold_seconds,
     socketPath: process.env.HERDR_SOCKET_PATH || null,
@@ -54,6 +63,13 @@ function healthCheck() {
   if (s.inhibitor.active && s.workingCount === 0) issues.push('inhibitor active but no working panes');
   const herdrOk = s.socketPath ? fs.existsSync(s.socketPath) || !!process.env.HERDR_BIN_PATH : true;
   if (!herdrOk) issues.push('herdr socket not found');
+  // The desktop takes one sleep shot per idle period. While we hold the block that
+  // shot is refused and never retried, so an idle machine stays awake indefinitely.
+  if (s.inhibitor.active && s.idle && s.idle.idle && s.idle.idleForMs >= 20 * 60000) {
+    issues.push(s.sleep.afterIdleMinutes > 0
+      ? `held while the session has been idle ${Math.round(s.idle.idleForMs / 60000)}m; the desktop will not retry until you interact — the nudge covers it ${s.sleep.afterIdleMinutes}m after release`
+      : `held while the session has been idle ${Math.round(s.idle.idleForMs / 60000)}m; the desktop will not retry until you interact, and sleep_after_idle_minutes=0 disables the nudge that would`);
+  }
   return { status: s, issues, healthy: issues.length === 0 && s.enabled };
 }
 function actionStatus() {
@@ -68,6 +84,12 @@ function actionStatus() {
   lines.push(`  OS verified: ${s.osVerified.osActive ? 'awake' : 'not awake'} — ${s.osVerified.detail}`);
   lines.push(`  grace: ${s.grace.enabled ? `on (${s.grace.startGrace}s/${s.grace.stopGrace}s)` : 'off'}`);
   lines.push(`  max hold: ${s.maxHoldSeconds}s`);
+  lines.push(`  idle: ${!s.idle ? 'not probed (no block held)'
+    : s.idle.available === false ? 'unavailable (logind not answering)'
+    : s.idle.idle ? `${Math.round(s.idle.idleForMs / 60000)}m — the desktop's sleep shot was refused while the block is held and it will NOT retry until you interact`
+    : 'no (session active)'}`);
+  lines.push(`  sleep nudge: ${s.sleep.afterIdleMinutes > 0 ? `re-issue suspend ${s.sleep.afterIdleMinutes}m after release, watchdog lingers ${s.sleep.lingerMinutes}m` : 'off (sleep_after_idle_minutes=0)'}`);
+  lines.push(`  sleep while working: ${s.sleep.whileWorkingMinutes > 0 ? `on — releases the block after ${s.sleep.whileWorkingMinutes}m idle` : 'off'}`);
   lines.push(`  watchdog: ${s.watchdogPid ? `pid ${s.watchdogPid}` : 'inactive'}`);
   if (h.issues.length) { lines.push(`  issues:`); h.issues.forEach(i => lines.push(`    - ${i}`)); }
   lines.push(`  config: ${s.configPath}`);
@@ -91,6 +113,8 @@ function actionDoctor(opts) {
   console.log(`workingCount: ${s.workingCount}`);
   console.log(`inhibitor: ${JSON.stringify(s.inhibitor, null, 2)}`);
   console.log(`osVerified: ${JSON.stringify(s.osVerified, null, 2)}`);
+  console.log(`idle: ${JSON.stringify(s.idle)}`);
+  console.log(`sleep: ${JSON.stringify(s.sleep)}`);
   if (s.platform === 'windows' || s.platform === 'wsl') {
     const hbPath = s.inhibitor.handle && s.inhibitor.handle.heartbeatPath;
     console.log(`keeper script: ${s.inhibitor.handle && s.inhibitor.handle.scriptPath || '(n/a)'}`);
@@ -131,6 +155,10 @@ function actionDoctor(opts) {
           const v = osVerifyInhibitor(plat, handle.backend || handle.kind, handle);
           console.log(`probe: started ${JSON.stringify(handle)} osVerified=${JSON.stringify(v)}`);
           stopInhibitor(plat, handle);
+          // Stop is async (SIGTERM to the process group): the OS needs a moment to
+          // reflect it. Probing immediately reports a false FAIL — same wait the
+          // selftest already does.
+          for (let i = 0; i < 25 && handle.pid != null && isAlive(handle.pid); i++) spawnSync('sleep', ['0.2']);
           const v2 = osVerifyInhibitor(plat, handle.backend || handle.kind, handle);
           console.log(`probe: after stop osVerified=${JSON.stringify(v2)} (should be inactive)`);
           console.log(`probe: ${!v2.osActive ? 'PASS' : 'FAIL'}`);

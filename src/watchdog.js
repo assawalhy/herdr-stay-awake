@@ -18,9 +18,24 @@ const fs = require('node:fs');
 const { WATCHDOG_PID_FILE } = require('./constants');
 const { log, isAlive, startPidBacked, writeJsonAtomic } = require('./util');
 
+// `Number(x) || dflt` would turn an explicit 0 into the default — these knobs are
+// documented as "0 disables", so read them nullish.
+function envNumber(raw, dflt, min) {
+  if (raw == null || raw === '') return dflt;
+  const n = Number(raw);
+  return Number.isFinite(n) && n >= min ? n : dflt;
+}
+
 // Poll interval. Kept below the default stop-grace (30s) so a release is not
 // unnecessarily delayed by a whole extra tick. Overridable for tests.
 const WATCHDOG_INTERVAL_MS = Math.max(1000, Number(process.env.HERDR_STAY_AWAKE_WATCHDOG_MS) || 30000);
+// Linger-phase poll: after the block is released we only re-check whether the OS
+// *wants* to sleep, which cannot change faster than a minute.
+const NUDGE_INTERVAL_MS = Math.max(5000, Number(process.env.HERDR_STAY_AWAKE_NUDGE_MS) || 60000);
+// How long the session must be continuously idle with no working pane before we
+// re-issue the sleep request. Guards against firing in the gap between two tool
+// calls of a live turn. 0 disables the quiet requirement.
+const NUDGE_QUIET_MS = envNumber(process.env.HERDR_STAY_AWAKE_NUDGE_QUIET_MS, 120000, 0);
 
 function readWatchdogPid() {
   try {
@@ -57,7 +72,10 @@ function stopWatchdog() {
       try { process.kill(pid, 'SIGTERM'); } catch {}
     }
   }
+  // The watchdog owns its own pidfile until its loop ends: unlinking it here while
+  // we *are* the watchdog would let a concurrent reconcile spawn a second one.
+  if (pid === process.pid) return;
   try { fs.unlinkSync(WATCHDOG_PID_FILE); } catch {}
 }
 
-module.exports = { ensureWatchdog, stopWatchdog, readWatchdogPid, writeWatchdogPid, WATCHDOG_INTERVAL_MS };
+module.exports = { ensureWatchdog, stopWatchdog, readWatchdogPid, writeWatchdogPid, WATCHDOG_INTERVAL_MS, NUDGE_INTERVAL_MS, NUDGE_QUIET_MS };

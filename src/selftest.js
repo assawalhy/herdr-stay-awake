@@ -7,7 +7,8 @@ const { saveWorking, loadWorking } = require('./state');
 const { extractPaneAndStatus } = require('./herdr');
 const { startInhibitor, stopInhibitor } = require('./inhibitor');
 const { osVerifyInhibitor } = require('./verify');
-const { detectLinuxBackend } = require('./backends/linux');
+const { detectLinuxBackend, nudgeDecision } = require('./backends/linux');
+const { loadGlobalConfig } = require('./config');
 const { probeWindowsKeeper, windowsApiProbe } = require('./backends/windows');
 
 function selftest() {
@@ -29,6 +30,33 @@ function selftestInner() {
     saveWorking(new Set(['a', 'b']));
     const ws = loadWorking();
     if (ws.size !== 2) { console.log('FAIL working set'); ok = false; }
+
+    // Sleep-after-release nudge: pure decision logic, no suspend ever issued here.
+    const idleFor = (ms) => ({ available: true, idle: true, idleSince: Date.now() - ms, idleForMs: ms });
+    const nd = (o) => nudgeDecision(Object.assign({
+      idleState: idleFor(40 * 60000), inhibitorHeldOs: false, workingCount: 0,
+      minIdleMs: 30 * 60000, minQuietMs: 2 * 60000, quietMs: 5 * 60000,
+    }, o));
+    const cases = [
+      ['idle past margin, nothing working, quiet', nd({}), true],
+      ['block still held', nd({ inhibitorHeldOs: true }), false],
+      ['a pane is working', nd({ workingCount: 1 }), false],
+      ['session active', nd({ idleState: { available: true, idle: false, idleSince: null, idleForMs: 0 } }), false],
+      ['idle below margin', nd({ idleState: idleFor(5 * 60000) }), false],
+      ['idle but not quiet long enough', nd({ quietMs: 30 * 1000 }), false],
+      ['logind unavailable', nd({ idleState: { available: false, idle: false, idleSince: null, idleForMs: 0 } }), false],
+    ];
+    for (const [name, d, want] of cases) {
+      if (d.fire !== want) { console.log(`FAIL nudge decision: ${name} (fire=${d.fire} want=${want})`); ok = false; }
+    }
+    console.log(`nudge decisions ${cases.length} checked`);
+
+    const cfg = loadGlobalConfig();
+    for (const k of ['sleep_after_idle_minutes', 'nudge_linger_minutes', 'sleep_while_working_minutes']) {
+      if (typeof cfg[k] !== 'number') { console.log(`FAIL config key ${k}`); ok = false; }
+    }
+    if (cfg.sleep_after_idle_minutes !== 30 || cfg.sleep_while_working_minutes !== 0) { console.log(`FAIL sleep defaults ${JSON.stringify(cfg)}`); ok = false; }
+
     const plat = detectPlatform();
     console.log(`platform ${plat} backend ${detectLinuxBackend()}`);
     if (plat === 'windows' || plat === 'wsl') {

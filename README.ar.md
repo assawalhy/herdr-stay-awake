@@ -50,12 +50,42 @@ herdr plugin action list --plugin assawalhy.stay-awake
 فترات السماح (`grace_enabled` في الإعدادات، 5 ثوانٍ للتفعيل / 30 ثانية للإيقاف)
 تُقلّل من التذبذب وتغطي فجوات الانهيار؛ **مفعّلة افتراضياً** (بدّلها بـ `t` في لوحة الإعدادات أو عبر `config.json`).
 
+## النوم بعد التحرير (Linux) — `sleep_after_idle_minutes`
+
+سطح المكتب يحاول **مرة واحدة فقط** في كل فترة خمول. إذا كان هناك مانع قائم عند انتهاء المؤقت،
+يسجّل GNOME خطأ `BlockedByInhibitorLock` ولا يطلب مرة أخرى — فتبقى الآلة مستيقظة حتى تلمسها،
+رغم أن المانع تحرّر قبل ذلك بوقت طويل. مُتحقَّق منه على هذه الآلة: رُفض الطلب 09:10،
+تحرّر المانع 12:09، وما زالت مستيقظة 13:06 دون أي مانع.
+
+لذلك لا يخرج المراقب فور التحرير. يبقى نشطاً (`nudge_linger_minutes`، الافتراضي 90 دقيقة)،
+وعند خمول الجلسة `sleep_after_idle_minutes` (الافتراضي 30 دقيقة) مع عدم وجود أي لوحة تعمل
+لمدتين متصلتين، يعيد هو الطلب عبر `loginctl suspend`. هذا الطلب يمرّ عبر logind،
+فلا يزال مرفوضاً طالما وُجد مانع — هو يعيد إيقاظ محاولة سطح المكتب ولا يتجاوز حجزك.
+
+```jsonc
+{
+  "sleep_after_idle_minutes": 30,      // 0 = بدون إعادة محاولة
+  "nudge_linger_minutes": 90,          // كم يبقى المراقب بعد التحرير
+  "sleep_while_working_minutes": 0     // اختياري، انظر أدناه
+}
+```
+
+اضبط `sleep_after_idle_minutes` أكبر من مهلة خمول سطح المكتب (20 دقيقة على الكهرباء /
+15 على البطارية في إعدادات GNOME الافتراضية) حتى لا تتسابق مع مؤقّت سطح المكتب.
+يعرض `status` مدة الخمول الحالية وهل هي مُجهّزة إعادة المحاولة.
+
+**`sleep_while_working_minutes`** هو الخيار الذي قد لا تريده: `0` (الافتراضي) يُبقي السلوك
+الحالي، وأي قيمة موجبة تحرّر المانع **رغم وجود لوحات تعمل** بعد أن تكون خاملاً بهذه المدة —
+أي أن النوم يقدّم على تقدّم الوكلاء. وضع S3 يُجمّد الوكلاء ولا يقتلهم، فيستأنفون عند الاستيقاظ.
+اضبطه فقط إن كنت تفضّل أن تنام الآلة على تشغيل أسطول كامل أثناء غيابك؛ زر `w` في لوحة
+الإعدادات يبدّل بين القيم.
+
 ## سلوك المنصات
 
 | المنصة | الآلية | سلسلة البدائل |
 | --- | --- | --- |
 | macOS | `caffeinate -d -i -s -w <pid>`، يُقتل للتحرير | — |
-| Linux (أصلي) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` + مراقب حيوية كل 30 ثانية يقرأ `herdr agent list` | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → تحذير تدهور |
+| Linux (أصلي) | `systemd-inhibit --what=sleep:idle … sleep <max_hold>` + مراقب حيوية كل 30 ثانية يقرأ `herdr agent list` + بقاء بعد التحرير يعيد محاولة النوم المرفوضة من سطح المكتب | → `org.gnome.SessionManager.Inhibit` → `org.freedesktop.ScreenSaver.Inhibit` → `xdg-screensaver` → `xset` → تحذير تدهور |
 | Windows (أصلي) | PowerShell مخفي `SetThreadExecutionState` | علامة `herdr-stay-awake-inhibitor-marker` في مسار `-File` |
 | WSL | نفس PowerShell عبر التشغيل البيني (`powershell.exe` في `$PATH`، الملف يُكتب في `%TEMP%` الخاص بـ Windows) | — |
 

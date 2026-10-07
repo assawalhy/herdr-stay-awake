@@ -61,6 +61,72 @@ function xdgStart() {
 function xdgStop() {
   spawnSync('xdg-screensaver', ['resume', ':0'], { stdio: 'ignore', timeout: 3000 });
 }
+// logind is the only thing that can tell us whether the OS *wanted* to sleep and
+// was refused. `busctl get-property` prints one `t "value"` line per property.
+function logindProps(props) {
+  if (!hasCommand('busctl')) return null;
+  const r = spawnSync('busctl', ['get-property', 'org.freedesktop.login1', '/org/freedesktop/login1', 'org.freedesktop.login1.Manager', ...props], { encoding: 'utf8', timeout: 3000 });
+  if (r.status !== 0 || !r.stdout) return null;
+  const lines = r.stdout.trim().split('\n');
+  const out = {};
+  props.forEach((p, i) => {
+    // busctl prints `b false` / `t 1234`; some builds quote string values.
+    const m = /^([bsitd])\s+(?:"([^"]*)"|(\S+))\s*$/.exec((lines[i] || '').trim());
+    if (m) out[p] = { t: m[1], v: m[2] !== undefined ? m[2] : m[3] };
+  });
+  return Object.keys(out).length ? out : null;
+}
+
+// IdleHint/IdleSinceHint as the OS sees them. `idleSince` is epoch ms; idleForMs
+// is how long the session has been idle. `available:false` means logind could not
+// be asked — callers must treat that as "unknown", never as "idle".
+function logindIdleState() {
+  const p = logindProps(['IdleHint', 'IdleSinceHint']);
+  if (!p || !p.IdleHint) return { available: false, idle: false, idleSince: null, idleForMs: 0 };
+  const idleSinceMs = p.IdleSinceHint && p.IdleSinceHint.t === 't' ? Number(p.IdleSinceHint.v) / 1000 : NaN;
+  const idle = p.IdleHint.v === 'true';
+  const idleSince = Number.isFinite(idleSinceMs) && idleSinceMs > 0 ? Math.round(idleSinceMs) : null;
+  return { available: true, idle, idleSince, idleForMs: idle && idleSince ? Date.now() - idleSince : 0 };
+}
+
+// True while an OS-level block inhibitor named herdr-stay-awake is registered,
+// regardless of what our state file believes (the state file can be stale).
+function osBlockHeld() {
+  const r = spawnSync('systemd-inhibit', ['--list'], { encoding: 'utf8', timeout: 3000 });
+  if (r.status !== 0 || !r.stdout) return false;
+  return r.stdout.includes('herdr-stay-awake');
+}
+
+// Pure decision: should we re-issue the OS sleep request right now? Kept separate
+// from the call so the selftest can cover every branch without suspending anything.
+//
+// A refused `loginctl suspend` (our own block, or a lid/polkit refusal) is normal and
+// must never be treated as an error — the watchdog just tries again on the next tick.
+function nudgeDecision(ctx) {
+  const { idleState, inhibitorHeldOs, workingCount, minIdleMs, quietMs } = ctx;
+  if (inhibitorHeldOs) return { fire: false, reason: 'block still held' };
+  if (workingCount > 0) return { fire: false, reason: `${workingCount} pane(s) working` };
+  if (!idleState || !idleState.available) return { fire: false, reason: 'logind idle state unavailable' };
+  if (!idleState.idle) return { fire: false, reason: 'session active' };
+  if (idleState.idleForMs < minIdleMs) return { fire: false, reason: `idle ${Math.round(idleState.idleForMs / 1000)}s < margin ${Math.round(minIdleMs / 1000)}s` };
+  if (quietMs < ctx.minQuietMs) return { fire: false, reason: `idle+quiet ${Math.round(quietMs / 1000)}s < ${Math.round(ctx.minQuietMs / 1000)}s (transient gap between turns?)` };
+  return { fire: true, reason: `idle ${Math.round(idleState.idleForMs / 60000)}m >= margin, no working pane for ${Math.round(quietMs / 1000)}s` };
+}
+
+// Re-arms the sleep request GNOME gave up on. Goes through logind, so it is refused
+// for as long as any block inhibitor stands — it never bypasses our own hold.
+function suspendNudge(ctx) {
+  const d = nudgeDecision(ctx);
+  if (!d.fire) return Object.assign({}, d, { ran: false });
+  if (ctx.dryRun) { log(`nudge: dry-run would suspend (${d.reason})`); return Object.assign({}, d, { ran: false, dryRun: true }); }
+  const bin = hasCommand('loginctl') ? 'loginctl' : hasCommand('systemctl') ? 'systemctl' : null;
+  if (!bin) { log('nudge: neither loginctl nor systemctl available'); return Object.assign({}, d, { ran: false }); }
+  const r = spawnSync(bin, ['suspend'], { encoding: 'utf8', timeout: 20000 });
+  const ok = r.status === 0;
+  log(`nudge: ${bin} suspend -> ${ok ? 'sent' : `refused status=${r.status} ${(r.stderr || '').trim()}`} (${d.reason})`);
+  return Object.assign({}, d, { ran: true, ok, status: r.status });
+}
+
 function detectLinuxBackend() {
   if (hasCommand('systemd-inhibit')) {
     const r = spawnSync('systemd-inhibit', ['--list'], { encoding: 'utf8', timeout: 3000 });
@@ -120,4 +186,4 @@ function linuxInhibitStop(handle) {
   if (handle.kind === 'xset') { spawnSync('xset', ['s', 'on', '+dpms'], { stdio: 'ignore', timeout: 2000 }); return; }
 }
 
-module.exports = { systemdStart, systemdStop, dbusCall, gnomeStart, gnomeStop, freedesktopStart, freedesktopStop, xdgStart, xdgStop, detectLinuxBackend, linuxInhibitStart, linuxInhibitStop };
+module.exports = { systemdStart, systemdStop, dbusCall, gnomeStart, gnomeStop, freedesktopStart, freedesktopStop, xdgStart, xdgStop, detectLinuxBackend, linuxInhibitStart, linuxInhibitStop, logindProps, logindIdleState, osBlockHeld, nudgeDecision, suspendNudge };
